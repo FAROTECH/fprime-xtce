@@ -1,0 +1,125 @@
+name: Validate fprime-baremetal issue 44 candidate
+
+on:
+  push:
+    branches:
+      - validation/fprime-baremetal-issue-44
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout validation host repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout exact fprime-baremetal baseline
+        uses: actions/checkout@v4
+        with:
+          repository: fprime-community/fprime-baremetal
+          ref: 14e75f7bce204d058d44a463620b65759bbd6187
+          path: work/fprime-baremetal
+          fetch-depth: 0
+
+      - name: Checkout exact F Prime devel baseline
+        uses: actions/checkout@v4
+        with:
+          repository: nasa/fprime
+          ref: 4e1f495726ba41f3b674fe6e0efe8a49c8894a0e
+          path: work/fprime
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install exact F Prime Python requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r work/fprime/requirements.txt
+
+      - name: Verify SHAs and accepted patch
+        run: |
+          set -euxo pipefail
+          test "$(git -C work/fprime-baremetal rev-parse HEAD)" = "14e75f7bce204d058d44a463620b65759bbd6187"
+          test "$(git -C work/fprime rev-parse HEAD)" = "4e1f495726ba41f3b674fe6e0efe8a49c8894a0e"
+          test "$(sha256sum .validation/issue44.patch | awk '{print $1}')" = "8227033a678bb9febc979b585e1186e8d537b269d82bf296a5dce8a382101a27"
+
+      - name: Apply candidate patch unchanged
+        run: |
+          set -euxo pipefail
+          cd work/fprime-baremetal
+          git apply --check "$GITHUB_WORKSPACE/.validation/issue44.patch"
+          git apply "$GITHUB_WORKSPACE/.validation/issue44.patch"
+          git diff --check
+          git diff --stat
+
+      - name: Create validation project
+        run: |
+          mkdir -p validation-project
+          cat > validation-project/settings.ini <<'EOF'
+          [fprime]
+          project_root: .
+          framework_path: ../work/fprime
+          library_locations: ../work/fprime-baremetal
+          EOF
+          cat > validation-project/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.18)
+          project(FprimeBaremetalIssue44Validation LANGUAGES C CXX)
+          find_package(FPrime REQUIRED PATHS "${CMAKE_CURRENT_LIST_DIR}/../work/fprime")
+          register_fprime_project()
+          EOF
+
+      - name: Generate and build real unit tests
+        working-directory: validation-project
+        run: |
+          set -euxo pipefail
+          fprime-util generate --ut
+          fprime-util build --ut
+          find build-fprime-automatic-linux-static-ut -type f -name '*TlmLinearChan*ut_exe' -print
+
+      - name: Confirm deinit signature and run TlmLinearChan suite
+        working-directory: validation-project
+        run: |
+          set -euxo pipefail
+          exe="$(find build-fprime-automatic-linux-static-ut -type f -name '*TlmLinearChan*ut_exe' -perm -111 | head -1)"
+          test -n "$exe"
+          grep -R -n "void deinit" ../work/fprime/Fw/Comp/PassiveComponentBase.hpp ../work/fprime/Fw/Comp/QueuedComponentBase.hpp
+          "$exe" --gtest_filter=TlmLinearChanTest.DeinitReleasesAllocatorStorage --gtest_color=no | tee /tmp/tlm-lifecycle.txt
+          "$exe" --gtest_color=no | tee /tmp/tlm-suite.txt
+          grep -F '[==========] Running 5 tests from 1 test suite.' /tmp/tlm-suite.txt
+          grep -F '[  PASSED  ] 5 tests.' /tmp/tlm-suite.txt
+          grep -F '[       OK ] TlmLinearChanTest.DeinitReleasesAllocatorStorage' /tmp/tlm-lifecycle.txt
+
+      - name: Run broader fprime-baremetal validation
+        working-directory: validation-project
+        run: |
+          set -euxo pipefail
+          fprime-util check | tee /tmp/fprime-baremetal-check.txt
+
+      - name: Final exact diff evidence
+        run: |
+          set -euxo pipefail
+          git -C work/fprime-baremetal diff --check
+          git -C work/fprime-baremetal diff --stat | tee /tmp/diff-stat.txt
+          git -C work/fprime-baremetal diff > /tmp/final.patch
+          sha256sum /tmp/final.patch .validation/issue44.patch
+          cmp /tmp/final.patch .validation/issue44.patch
+          printf 'fprime-baremetal=%s\n' "$(git -C work/fprime-baremetal rev-parse HEAD)"
+          printf 'fprime=%s\n' "$(git -C work/fprime rev-parse HEAD)"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fprime-baremetal-issue-44-validation
+          path: |
+            /tmp/tlm-lifecycle.txt
+            /tmp/tlm-suite.txt
+            /tmp/fprime-baremetal-check.txt
+            /tmp/diff-stat.txt
+            /tmp/final.patch
+          if-no-files-found: warn
