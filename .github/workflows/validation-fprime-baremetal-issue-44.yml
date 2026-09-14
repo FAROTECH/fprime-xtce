@@ -80,14 +80,15 @@ jobs:
           set -euxo pipefail
           fprime-util generate --ut
           fprime-util build --ut
-          find build-fprime-automatic-linux-static-ut -type f -name '*TlmLinearChan*ut_exe' -print
+          test -x build-fprime-automatic-linux-static-ut/bin/Linux/fprime-baremetal_Svc_TlmLinearChan_ut_exe
+          ls -l build-fprime-automatic-linux-static-ut/bin/Linux/fprime-baremetal_Svc_TlmLinearChan_ut_exe
 
       - name: Confirm deinit signature and run TlmLinearChan suite
         working-directory: validation-project
         run: |
           set -euxo pipefail
-          exe="$(find build-fprime-automatic-linux-static-ut -type f -name '*TlmLinearChan*ut_exe' -perm -111 | head -1)"
-          test -n "$exe"
+          exe=build-fprime-automatic-linux-static-ut/bin/Linux/fprime-baremetal_Svc_TlmLinearChan_ut_exe
+          test -x "$exe"
           grep -R -n "void deinit" ../work/fprime/Fw/Comp/PassiveComponentBase.hpp ../work/fprime/Fw/Comp/QueuedComponentBase.hpp
           "$exe" --gtest_filter=TlmLinearChanTest.DeinitReleasesAllocatorStorage --gtest_color=no | tee /tmp/tlm-lifecycle.txt
           "$exe" --gtest_color=no | tee /tmp/tlm-suite.txt
