@@ -30,6 +30,7 @@ jobs:
           ref: 4e1f495726ba41f3b674fe6e0efe8a49c8894a0e
           path: work/fprime
           fetch-depth: 0
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
